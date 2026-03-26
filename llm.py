@@ -16,34 +16,37 @@ class CharTokenizer:
         return "".join(self.itos[i] for i in ids)
 
 
-def get_batch(data: torch.Tensor, block_size: int, batch_size: int):
-    ix = torch.randint(len(data) - block_size - 1, (batch_size,))
-    x = torch.stack([data[i : i + block_size] for i in ix])
-    y = torch.stack([data[i + 1 : i + block_size + 1] for i in ix])
-    return x, y
+class DataModule:
+    def __init__(self, text: str):
+        self.tokenizer = CharTokenizer(text)
+        data = torch.tensor(self.tokenizer.encode(text), dtype=torch.long)
+        split = int(0.9 * len(data))
+        self.train_data = data[:split]
+        self.val_data = data[split:]
+
+    def get_batch(self, split: str, block_size: int, batch_size: int):
+        data = self.train_data if split == "train" else self.val_data
+        ix = torch.randint(len(data) - block_size - 1, (batch_size,))
+        x = torch.stack([data[i : i + block_size] for i in ix])
+        y = torch.stack([data[i + 1 : i + block_size + 1] for i in ix])
+        return x, y
 
 
 def main():
     text = Path("data.txt").read_text(encoding="utf-8")
-    tokenizer = CharTokenizer(text)
-    data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
+    data_module = DataModule(text)
 
-    print("Dataset length:", len(data))
-    print("Vocabulary size:", tokenizer.vocab_size)
+    print("Train set length:", len(data_module.train_data))
+    print("Validation set length:", len(data_module.val_data))
 
-    block_size = 8
-    batch_size = 4
-    xb, yb = get_batch(data, block_size, batch_size)
+    xb, yb = data_module.get_batch("train", block_size=8, batch_size=4)
 
-    print("\nInput batch tensor:")
+    print("\nTrain batch example:")
     print(xb)
 
-    print("\nTarget batch tensor:")
-    print(yb)
-
-    print("\nDecoded first example:")
-    print("x:", tokenizer.decode(xb[0].tolist()))
-    print("y:", tokenizer.decode(yb[0].tolist()))
+    print("\nDecoded example:")
+    print(data_module.tokenizer.decode(xb[0].tolist()))
+    print(data_module.tokenizer.decode(yb[0].tolist()))
 
 
 if __name__ == "__main__":
