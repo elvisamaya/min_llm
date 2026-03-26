@@ -1,4 +1,5 @@
 from pathlib import Path
+import torch
 
 
 class CharTokenizer:
@@ -15,26 +16,34 @@ class CharTokenizer:
         return "".join(self.itos[i] for i in ids)
 
 
+def get_batch(data: torch.Tensor, block_size: int, batch_size: int):
+    ix = torch.randint(len(data) - block_size - 1, (batch_size,))
+    x = torch.stack([data[i : i + block_size] for i in ix])
+    y = torch.stack([data[i + 1 : i + block_size + 1] for i in ix])
+    return x, y
+
+
 def main():
     text = Path("data.txt").read_text(encoding="utf-8")
     tokenizer = CharTokenizer(text)
+    data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
 
-    print("Loaded dataset successfully.\n")
-    print("First 300 characters:\n")
-    print(text[:300])
+    print("Dataset length:", len(data))
+    print("Vocabulary size:", tokenizer.vocab_size)
 
-    print("\nVocabulary size:", tokenizer.vocab_size)
-    print("Vocabulary characters:")
-    print(sorted(tokenizer.stoi.keys()))
+    block_size = 8
+    batch_size = 4
+    xb, yb = get_batch(data, block_size, batch_size)
 
-    encoded = tokenizer.encode(text[:80])
-    decoded = tokenizer.decode(encoded)
+    print("\nInput batch tensor:")
+    print(xb)
 
-    print("\nEncoded sample:")
-    print(encoded)
+    print("\nTarget batch tensor:")
+    print(yb)
 
-    print("\nDecoded back:")
-    print(decoded)
+    print("\nDecoded first example:")
+    print("x:", tokenizer.decode(xb[0].tolist()))
+    print("y:", tokenizer.decode(yb[0].tolist()))
 
 
 if __name__ == "__main__":
