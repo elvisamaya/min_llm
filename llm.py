@@ -34,7 +34,7 @@ class DataModule:
         return x, y
 
 
-class SelfAttentionHead(nn.Module):
+class Head(nn.Module):
     def __init__(self, n_embd: int, head_size: int, block_size: int):
         super().__init__()
         self.key = nn.Linear(n_embd, head_size, bias=False)
@@ -46,23 +46,36 @@ class SelfAttentionHead(nn.Module):
         b, t, c = x.shape
         k = self.key(x)
         q = self.query(x)
-
         wei = q @ k.transpose(-2, -1) * (k.size(-1) ** -0.5)
         wei = wei.masked_fill(self.tril[:t, :t] == 0, float("-inf"))
         wei = F.softmax(wei, dim=-1)
-
         v = self.value(x)
         out = wei @ v
         return out
 
 
+class MultiHeadAttention(nn.Module):
+    def __init__(self, n_embd: int, n_head: int, block_size: int):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.heads = nn.ModuleList(
+            [Head(n_embd, head_size, block_size) for _ in range(n_head)]
+        )
+        self.proj = nn.Linear(n_embd, n_embd)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.proj(out)
+        return out
+
+
 class MiniLLM(nn.Module):
-    def __init__(self, vocab_size: int, block_size: int, n_embd: int):
+    def __init__(self, vocab_size: int, block_size: int, n_embd: int, n_head: int):
         super().__init__()
         self.block_size = block_size
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.sa_head = SelfAttentionHead(n_embd, n_embd, block_size)
+        self.sa = MultiHeadAttention(n_embd, n_head, block_size)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
@@ -70,7 +83,7 @@ class MiniLLM(nn.Module):
         tok_emb = self.token_embedding_table(idx)
         pos_emb = self.position_embedding_table(torch.arange(t))
         x = tok_emb + pos_emb
-        x = self.sa_head(x)
+        x = self.sa(x)
         logits = self.lm_head(x)
 
         loss = None
@@ -98,12 +111,13 @@ def main():
     text = Path("data.txt").read_text(encoding="utf-8")
     data_module = DataModule(text)
 
-    block_size = 32
+    block_size = 64
     batch_size = 32
-    n_embd = 64
-    max_iters = 1500
+    n_embd = 128
+    n_head = 4
+    max_iters = 1800
 
-    model = MiniLLM(data_module.tokenizer.vocab_size, block_size, n_embd)
+    model = MiniLLM(data_module.tokenizer.vocab_size, block_size, n_embd, n_head)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 
     for step in range(max_iters):
