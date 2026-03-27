@@ -65,8 +65,20 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.proj(out)
-        return out
+        return self.proj(out)
+
+
+class FeedForward(nn.Module):
+    def __init__(self, n_embd: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
 
 class MiniLLM(nn.Module):
@@ -76,6 +88,7 @@ class MiniLLM(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         self.sa = MultiHeadAttention(n_embd, n_head, block_size)
+        self.ffwd = FeedForward(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
@@ -84,6 +97,7 @@ class MiniLLM(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(t))
         x = tok_emb + pos_emb
         x = self.sa(x)
+        x = self.ffwd(x)
         logits = self.lm_head(x)
 
         loss = None
@@ -115,7 +129,7 @@ def main():
     batch_size = 32
     n_embd = 128
     n_head = 4
-    max_iters = 1800
+    max_iters = 2000
 
     model = MiniLLM(data_module.tokenizer.vocab_size, block_size, n_embd, n_head)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
