@@ -34,12 +34,35 @@ class DataModule:
         return x, y
 
 
+class SelfAttentionHead(nn.Module):
+    def __init__(self, n_embd: int, head_size: int, block_size: int):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer("tril", torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, t, c = x.shape
+        k = self.key(x)
+        q = self.query(x)
+
+        wei = q @ k.transpose(-2, -1) * (k.size(-1) ** -0.5)
+        wei = wei.masked_fill(self.tril[:t, :t] == 0, float("-inf"))
+        wei = F.softmax(wei, dim=-1)
+
+        v = self.value(x)
+        out = wei @ v
+        return out
+
+
 class MiniLLM(nn.Module):
     def __init__(self, vocab_size: int, block_size: int, n_embd: int):
         super().__init__()
         self.block_size = block_size
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.sa_head = SelfAttentionHead(n_embd, n_embd, block_size)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
@@ -47,6 +70,7 @@ class MiniLLM(nn.Module):
         tok_emb = self.token_embedding_table(idx)
         pos_emb = self.position_embedding_table(torch.arange(t))
         x = tok_emb + pos_emb
+        x = self.sa_head(x)
         logits = self.lm_head(x)
 
         loss = None
@@ -77,7 +101,7 @@ def main():
     block_size = 32
     batch_size = 32
     n_embd = 64
-    max_iters = 1200
+    max_iters = 1500
 
     model = MiniLLM(data_module.tokenizer.vocab_size, block_size, n_embd)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
@@ -94,7 +118,7 @@ def main():
             print(f"step {step}: loss {loss.item():.4f}")
 
     context = torch.zeros((1, 1), dtype=torch.long)
-    output = model.generate(context, max_new_tokens=300)[0].tolist()
+    output = model.generate(context, max_new_tokens=400)[0].tolist()
 
     print("\n=== SAMPLE OUTPUT ===\n")
     print(data_module.tokenizer.decode(output))
