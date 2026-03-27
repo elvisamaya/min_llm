@@ -1,5 +1,7 @@
 from pathlib import Path
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 class CharTokenizer:
@@ -32,21 +34,61 @@ class DataModule:
         return x, y
 
 
+class BigramLanguageModel(nn.Module):
+    def __init__(self, vocab_size: int):
+        super().__init__()
+        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+
+    def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
+        logits = self.token_embedding_table(idx)
+
+        loss = None
+        if targets is not None:
+            b, t, c = logits.shape
+            logits = logits.view(b * t, c)
+            targets = targets.view(b * t)
+            loss = F.cross_entropy(logits, targets)
+
+        return logits, loss
+
+    @torch.no_grad()
+    def generate(self, idx: torch.Tensor, max_new_tokens: int):
+        for _ in range(max_new_tokens):
+            logits, _ = self(idx)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+        return idx
+
+
 def main():
     text = Path("data.txt").read_text(encoding="utf-8")
     data_module = DataModule(text)
+    model = BigramLanguageModel(data_module.tokenizer.vocab_size)
 
-    print("Train set length:", len(data_module.train_data))
-    print("Validation set length:", len(data_module.val_data))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
 
-    xb, yb = data_module.get_batch("train", block_size=8, batch_size=4)
+    block_size = 8
+    batch_size = 32
+    max_iters = 1000
 
-    print("\nTrain batch example:")
-    print(xb)
+    for step in range(max_iters):
+        xb, yb = data_module.get_batch("train", block_size, batch_size)
+        _, loss = model(xb, yb)
 
-    print("\nDecoded example:")
-    print(data_module.tokenizer.decode(xb[0].tolist()))
-    print(data_module.tokenizer.decode(yb[0].tolist()))
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+        if step % 100 == 0:
+            print(f"step {step}: loss {loss.item():.4f}")
+
+    context = torch.zeros((1, 1), dtype=torch.long)
+    output = model.generate(context, max_new_tokens=300)[0].tolist()
+
+    print("\n=== SAMPLE OUTPUT ===\n")
+    print(data_module.tokenizer.decode(output))
 
 
 if __name__ == "__main__":
